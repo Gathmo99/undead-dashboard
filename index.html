@@ -853,6 +853,87 @@
     line-height: 1.35;
   }
 
+
+  .auth-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: none;
+    place-items: center;
+    padding: 20px;
+    background:
+      radial-gradient(circle at 50% 20%, rgba(134,255,63,0.16), transparent 28%),
+      rgba(0,0,0,0.92);
+  }
+
+  .auth-gate.active {
+    display: grid;
+  }
+
+  .auth-panel {
+    width: min(520px, 94vw);
+    border: 1px solid var(--border);
+    background:
+      linear-gradient(180deg, rgba(15, 30, 12, 0.96), rgba(4, 8, 4, 0.98));
+    box-shadow:
+      inset 0 0 34px rgba(0,0,0,0.9),
+      0 0 40px rgba(134,255,63,0.14);
+    padding: clamp(18px, 3vw, 34px);
+    text-align: center;
+  }
+
+  .auth-title {
+    color: var(--green);
+    font-size: clamp(24px, 4vw, 46px);
+    margin: 0 0 10px;
+    text-shadow: 0 0 16px var(--shadow);
+  }
+
+  .auth-subtitle {
+    color: var(--bone);
+    margin-bottom: 18px;
+    line-height: 1.4;
+  }
+
+  .auth-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .auth-grid input {
+    border: 1px solid var(--border);
+    background: rgba(0,0,0,0.35);
+    color: var(--bone);
+    padding: 12px;
+    font-family: inherit;
+    font-size: 16px;
+    outline: none;
+  }
+
+  .auth-grid input:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 10px rgba(134,255,63,0.25);
+  }
+
+  .auth-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .auth-status {
+    color: var(--green);
+    min-height: 38px;
+    line-height: 1.35;
+    margin-top: 10px;
+  }
+
+  .auth-user-line {
+    color: var(--muted);
+    font-size: clamp(11px, 0.95vw, 14px);
+    line-height: 1.35;
+  }
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -861,9 +942,126 @@
    ============================ */
 window.SUPABASE_URL = "https://tskrmbddhtfeacthvnem.supabase.co";
 window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRza3JtYmRkaHRmZWFjdGh2bmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExODM3OTYsImV4cCI6MjA5Njc1OTc5Nn0.p68Hjjm_g-VXvv_EOsVjJBn0xxiRmNXIYFKDx6EPVhk";
-window.CLOUD_USER_ID = "jan-undead-dashboard";
+window.CLOUD_USER_ID = null;
 
 window.supabaseClient = null;
+
+window.currentAuthUser = null;
+
+window.requireAuthUserId = function requireAuthUserId() {
+  if (!window.currentAuthUser || !window.currentAuthUser.id) {
+    throw new Error("Nicht eingeloggt.");
+  }
+  return window.currentAuthUser.id;
+};
+
+window.showAuthGate = function showAuthGate(show) {
+  const gate = document.getElementById("auth-gate");
+  if (gate) gate.classList.toggle("active", !!show);
+};
+
+window.setAuthStatus = function setAuthStatus(text) {
+  const status = document.getElementById("auth-status");
+  if (status) status.textContent = text;
+};
+
+window.updateAuthUi = function updateAuthUi(user) {
+  const userLine = document.getElementById("auth-user-line");
+
+  if (user) {
+    window.currentAuthUser = user;
+    window.CLOUD_USER_ID = user.id;
+    window.showAuthGate(false);
+    if (userLine) userLine.textContent = "Eingeloggt als: " + (user.email || user.id);
+    const cloudStatus = document.getElementById("cloud-status");
+    if (cloudStatus) cloudStatus.textContent = "Login aktiv. Gruftwolke bereit.";
+  } else {
+    window.currentAuthUser = null;
+    window.CLOUD_USER_ID = null;
+    window.showAuthGate(true);
+    if (userLine) userLine.textContent = "Nicht eingeloggt.";
+  }
+};
+
+window.signUpWithEmail = async function signUpWithEmail() {
+  const email = document.getElementById("auth-email")?.value.trim();
+  const password = document.getElementById("auth-password")?.value;
+
+  if (!email || !password) {
+    window.setAuthStatus("E-Mail und Passwort eintragen.");
+    return;
+  }
+
+  const { data, error } = await window.supabaseClient.auth.signUp({ email, password });
+  if (error) {
+    window.setAuthStatus("Registrierung fehlgeschlagen: " + error.message);
+    return;
+  }
+
+  window.setAuthStatus("Registrierung erstellt. Falls Supabase Bestätigung verlangt, prüfe deine E-Mail.");
+  if (data.user) {
+    window.updateAuthUi(data.user);
+    if (typeof window.loadFromCloud === "function") await window.loadFromCloud();
+  }
+};
+
+window.loginWithEmail = async function loginWithEmail() {
+  const email = document.getElementById("auth-email")?.value.trim();
+  const password = document.getElementById("auth-password")?.value;
+
+  if (!email || !password) {
+    window.setAuthStatus("E-Mail und Passwort eintragen.");
+    return;
+  }
+
+  const { data, error } = await window.supabaseClient.auth.signInWithPassword({ email, password });
+  if (error) {
+    window.setAuthStatus("Login fehlgeschlagen: " + error.message);
+    return;
+  }
+
+  window.setAuthStatus("Eingeloggt. Die Gruft öffnet sich.");
+  window.updateAuthUi(data.user);
+  if (typeof window.loadFromCloud === "function") await window.loadFromCloud();
+};
+
+window.logoutAuth = async function logoutAuth() {
+  if (!window.supabaseClient) return;
+  await window.supabaseClient.auth.signOut();
+  window.updateAuthUi(null);
+};
+
+window.setupAuth = async function setupAuth() {
+  if (!window.supabaseClient) window.initCloud();
+  if (!window.supabaseClient) return;
+
+  const login = document.getElementById("auth-login");
+  const signup = document.getElementById("auth-signup");
+  const logout = document.getElementById("auth-logout");
+
+  if (login && !login.dataset.authBound) {
+    login.dataset.authBound = "true";
+    login.addEventListener("click", window.loginWithEmail);
+  }
+
+  if (signup && !signup.dataset.authBound) {
+    signup.dataset.authBound = "true";
+    signup.addEventListener("click", window.signUpWithEmail);
+  }
+
+  if (logout && !logout.dataset.authBound) {
+    logout.dataset.authBound = "true";
+    logout.addEventListener("click", window.logoutAuth);
+  }
+
+  window.supabaseClient.auth.onAuthStateChange((_event, session) => {
+    window.updateAuthUi(session?.user || null);
+  });
+
+  const { data } = await window.supabaseClient.auth.getSession();
+  window.updateAuthUi(data.session?.user || null);
+};
+
 
 window.cloudReady = function cloudReady() {
   return (
@@ -883,7 +1081,7 @@ window.initCloud = function initCloud() {
   }
 
   window.supabaseClient = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
-  status.textContent = "Cloud bereit. Die Gruftwolke lauscht.";
+  status.textContent = "Cloud bereit. Bitte einloggen.";
 };
 
 window.cloudToday = function cloudToday() {
@@ -898,7 +1096,7 @@ window.upsertCloudMetric = async function upsertCloudMetric(type, payload) {
   const result = await window.supabaseClient
     .from("dashboard_entries")
     .upsert({
-      user_id: window.CLOUD_USER_ID,
+      user_id: window.requireAuthUserId(),
       entry_date: today,
       entry_type: type,
       payload
@@ -943,7 +1141,7 @@ window.loadFromCloud = async function loadFromCloud() {
     const { data, error } = await window.supabaseClient
       .from("dashboard_entries")
       .select("entry_type,payload")
-      .eq("user_id", window.CLOUD_USER_ID)
+      .eq("user_id", window.requireAuthUserId())
       .eq("entry_date", today);
 
     if (error) throw error;
@@ -972,6 +1170,7 @@ window.loadFromCloud = async function loadFromCloud() {
 
 setTimeout(() => {
   window.initCloud();
+  if (typeof window.setupAuth === "function") window.setupAuth();
 
   const syncButton = document.getElementById("cloud-sync");
   const loadButton = document.getElementById("cloud-load");
@@ -983,6 +1182,25 @@ setTimeout(() => {
 </script>
 </head>
 <body>
+
+<div class="auth-gate active" id="auth-gate">
+  <section class="auth-panel">
+    <h1 class="auth-title">☠ Gruft-Login</h1>
+    <div class="auth-subtitle">
+      Melde dich an, damit deine Kalorien, Zigaretten, Wasser- und Gewichtsdaten nur unter deinem Supabase-Account gespeichert werden.
+    </div>
+    <div class="auth-grid">
+      <input id="auth-email" type="email" autocomplete="email" placeholder="E-Mail">
+      <input id="auth-password" type="password" autocomplete="current-password" placeholder="Passwort">
+      <div class="auth-actions">
+        <button id="auth-login" type="button">Einloggen</button>
+        <button id="auth-signup" type="button">Registrieren</button>
+      </div>
+      <div class="auth-status" id="auth-status">Die Gruft verlangt Ausweis.</div>
+    </div>
+  </section>
+</div>
+
 <div class="pool"></div>
 
 <main class="app">
@@ -1265,6 +1483,8 @@ setTimeout(() => {
         <div class="cloud-status" id="cloud-status">Cloud wird geprüft...</div>
         <button id="cloud-sync" type="button">Jetzt synchronisieren</button>
         <button id="cloud-load" type="button">Aus Cloud laden</button>
+        <button id="auth-logout" class="reset" type="button">Ausloggen</button>
+        <div class="auth-user-line" id="auth-user-line">Nicht eingeloggt.</div>
       </div>
     </section>
   </aside>
@@ -2262,8 +2482,8 @@ window.enableCloudAutosync = async function enableCloudAutosync() {
 
 window.addEventListener("load", () => {
   setTimeout(() => {
-    window.enableCloudAutosync();
-  }, 1200);
+    if (window.currentAuthUser) window.enableCloudAutosync();
+  }, 1500);
 });
 </script>
 
@@ -2372,6 +2592,19 @@ window.addEventListener("load", () => {
   if (close) close.addEventListener("click", window.stopBarcodeScanner);
 });
 </script>
+
+
+window.addEventListener("load", () => {
+  setTimeout(() => {
+    if (window.supabaseClient) {
+      window.supabaseClient.auth.onAuthStateChange((_event, session) => {
+        if (session?.user && typeof window.enableCloudAutosync === "function") {
+          setTimeout(() => window.enableCloudAutosync(), 700);
+        }
+      });
+    }
+  }, 1800);
+});
 
 </body>
 </html>
