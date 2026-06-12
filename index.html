@@ -934,6 +934,46 @@
     line-height: 1.35;
   }
 
+
+  .profile-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .profile-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .profile-row input,
+  .profile-row select,
+  .profile-grid input,
+  .profile-grid select {
+    min-width: 0;
+    border: 1px solid var(--border);
+    background: rgba(0,0,0,0.35);
+    color: var(--bone);
+    padding: 11px 10px;
+    font-family: inherit;
+    font-size: clamp(13px, 1.1vw, 17px);
+    outline: none;
+  }
+
+  .profile-row input:focus,
+  .profile-row select:focus,
+  .profile-grid input:focus,
+  .profile-grid select:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 10px rgba(134,255,63,0.25);
+  }
+
+  .profile-note {
+    color: var(--muted);
+    font-size: clamp(11px, 0.95vw, 14px);
+    line-height: 1.35;
+  }
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -1180,6 +1220,183 @@ setTimeout(() => {
 }, 600);
 
 </script>
+<script>
+
+/* ============================
+   User Profile Logic
+   ============================ */
+window.DEFAULT_PROFILE = {
+  name: "",
+  age: 26,
+  height_cm: 187,
+  weight_kg: 145,
+  sex: "male",
+  kcal_limit: 1600,
+  activity_factor: 1.2
+};
+
+window.currentProfile = null;
+
+window.profileStorageKey = function profileStorageKey() {
+  const id = window.currentAuthUser?.id || "local";
+  return "undead-user-profile-" + id;
+};
+
+window.loadLocalProfile = function loadLocalProfile() {
+  try {
+    return { ...window.DEFAULT_PROFILE, ...JSON.parse(localStorage.getItem(window.profileStorageKey()) || "{}") };
+  } catch {
+    return { ...window.DEFAULT_PROFILE };
+  }
+};
+
+window.saveLocalProfile = function saveLocalProfile(profile) {
+  localStorage.setItem(window.profileStorageKey(), JSON.stringify(profile));
+};
+
+window.calculateBmr = function calculateBmr(profile) {
+  const weight = Number(profile.weight_kg);
+  const height = Number(profile.height_cm);
+  const age = Number(profile.age);
+
+  if (profile.sex === "female") return Math.round(10 * weight + 6.25 * height - 5 * age - 161);
+  if (profile.sex === "male") return Math.round(10 * weight + 6.25 * height - 5 * age + 5);
+  return Math.round(10 * weight + 6.25 * height - 5 * age - 78);
+};
+
+window.calculateMaintenance = function calculateMaintenance(profile) {
+  return Math.round(window.calculateBmr(profile) * Number(profile.activity_factor || 1.2));
+};
+
+window.applyProfileToUi = function applyProfileToUi(profile) {
+  window.currentProfile = { ...window.DEFAULT_PROFILE, ...profile };
+  window.KCAL_LIMIT_DYNAMIC = Number(window.currentProfile.kcal_limit || 1600);
+  window.PROFILE_MAINTENANCE_DYNAMIC = window.calculateMaintenance(window.currentProfile);
+
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value ?? "";
+  };
+
+  setValue("profile-name", window.currentProfile.name);
+  setValue("profile-age", window.currentProfile.age);
+  setValue("profile-height", window.currentProfile.height_cm);
+  setValue("profile-weight", window.currentProfile.weight_kg);
+  setValue("profile-sex", window.currentProfile.sex);
+  setValue("profile-kcal-limit", window.currentProfile.kcal_limit);
+
+  const note = document.getElementById("profile-note");
+  if (note) {
+    note.textContent = `BMR: ${window.calculateBmr(window.currentProfile)} kcal · Erhaltung: ${window.calculateMaintenance(window.currentProfile)} kcal`;
+  }
+
+  const currentWeight = document.getElementById("current-weight");
+  const startWeight = document.getElementById("start-weight");
+  if (currentWeight) currentWeight.textContent = Number(window.currentProfile.weight_kg).toFixed(1) + " kg";
+  if (startWeight) startWeight.textContent = Number(window.currentProfile.weight_kg).toFixed(1) + " kg";
+
+  // Bestehende Anzeige dynamisch aktualisieren, falls vorhanden
+  document.querySelectorAll(".data-list strong").forEach(el => {
+    if (el.textContent === "2485 kcal") el.textContent = window.calculateBmr(window.currentProfile) + " kcal";
+    if (el.textContent === "2980 kcal") el.textContent = window.calculateMaintenance(window.currentProfile) + " kcal";
+  });
+
+  if (typeof renderKcal === "function") renderKcal();
+  if (typeof updateV4Panels === "function") updateV4Panels();
+};
+
+window.readProfileFromForm = function readProfileFromForm() {
+  const get = id => document.getElementById(id)?.value;
+  return {
+    name: get("profile-name") || "",
+    age: Number(String(get("profile-age") || 26).replace(",", ".")),
+    height_cm: Number(String(get("profile-height") || 187).replace(",", ".")),
+    weight_kg: Number(String(get("profile-weight") || 145).replace(",", ".")),
+    sex: get("profile-sex") || "male",
+    kcal_limit: Number(String(get("profile-kcal-limit") || 1600).replace(",", ".")),
+    activity_factor: 1.2
+  };
+};
+
+window.saveUserProfile = async function saveUserProfile() {
+  const profile = window.readProfileFromForm();
+  window.saveLocalProfile(profile);
+  window.applyProfileToUi(profile);
+
+  const status = document.getElementById("profile-note");
+  if (status) status.textContent = "Profil lokal gespeichert. Synchronisiere...";
+
+  if (window.supabaseClient && window.currentAuthUser) {
+    const { error } = await window.supabaseClient
+      .from("dashboard_profiles")
+      .upsert({
+        user_id: window.currentAuthUser.id,
+        name: profile.name,
+        age: profile.age,
+        height_cm: profile.height_cm,
+        weight_kg: profile.weight_kg,
+        sex: profile.sex,
+        kcal_limit: profile.kcal_limit,
+        activity_factor: profile.activity_factor
+      }, { onConflict: "user_id" });
+
+    if (error) {
+      if (status) status.textContent = "Profil Cloud-Fehler: " + error.message;
+      console.error(error);
+      return;
+    }
+
+    if (status) status.textContent = `Profil gespeichert · BMR ${window.calculateBmr(profile)} kcal · Erhaltung ${window.calculateMaintenance(profile)} kcal`;
+  }
+};
+
+window.loadUserProfileFromCloud = async function loadUserProfileFromCloud() {
+  if (!window.supabaseClient || !window.currentAuthUser) {
+    window.applyProfileToUi(window.loadLocalProfile());
+    return;
+  }
+
+  const { data, error } = await window.supabaseClient
+    .from("dashboard_profiles")
+    .select("*")
+    .eq("user_id", window.currentAuthUser.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error(error);
+    window.applyProfileToUi(window.loadLocalProfile());
+    return;
+  }
+
+  if (data) {
+    const profile = {
+      name: data.name || "",
+      age: data.age || 26,
+      height_cm: Number(data.height_cm || 187),
+      weight_kg: Number(data.weight_kg || 145),
+      sex: data.sex || "male",
+      kcal_limit: data.kcal_limit || 1600,
+      activity_factor: Number(data.activity_factor || 1.2)
+    };
+    window.saveLocalProfile(profile);
+    window.applyProfileToUi(profile);
+  } else {
+    window.applyProfileToUi(window.loadLocalProfile());
+  }
+};
+
+window.addEventListener("load", () => {
+  setTimeout(() => {
+    window.applyProfileToUi(window.loadLocalProfile());
+    const saveBtn = document.getElementById("profile-save");
+    if (saveBtn && !saveBtn.dataset.profileBound) {
+      saveBtn.dataset.profileBound = "true";
+      saveBtn.addEventListener("click", window.saveUserProfile);
+    }
+  }, 500);
+});
+
+</script>
 </head>
 <body>
 
@@ -1219,6 +1436,31 @@ setTimeout(() => {
         <div>KW <span id="week-number">—</span></div>
       </div>
     </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Profil</h2>
+      <div class="profile-grid">
+        <div class="profile-row">
+          <input id="profile-name" placeholder="Name">
+          <input id="profile-age" inputmode="numeric" placeholder="Alter">
+        </div>
+        <div class="profile-row">
+          <input id="profile-height" inputmode="decimal" placeholder="Größe cm">
+          <input id="profile-weight" inputmode="decimal" placeholder="Gewicht kg">
+        </div>
+        <div class="profile-row">
+          <select id="profile-sex">
+            <option value="male">Männlich</option>
+            <option value="female">Weiblich</option>
+            <option value="other">Divers / neutral</option>
+          </select>
+          <input id="profile-kcal-limit" inputmode="numeric" placeholder="Kcal-Ziel">
+        </div>
+        <button id="profile-save" type="button">Profil speichern</button>
+        <div class="profile-note" id="profile-note">Jeder Login hat sein eigenes Profil.</div>
+      </div>
+    </section>
+
 
     <section class="panel">
       <h2 class="panel-title">Tagesfortschritt</h2>
@@ -2605,6 +2847,105 @@ window.addEventListener("load", () => {
     }
   }, 1800);
 });
+
+
+<script>
+/* ============================
+   Profile Dynamic Overrides
+   ============================ */
+
+window.getKcalLimit = function getKcalLimit() {
+  return Number(window.currentProfile?.kcal_limit || window.KCAL_LIMIT_DYNAMIC || 1600);
+};
+
+window.getMaintenanceKcal = function getMaintenanceKcal() {
+  return Number(window.currentProfile ? window.calculateMaintenance(window.currentProfile) : window.PROFILE_MAINTENANCE_DYNAMIC || 2980);
+};
+
+setTimeout(() => {
+  if (typeof renderKcal === "function" && !renderKcal.__profileDynamic) {
+    const originalRenderKcal = renderKcal;
+    window.renderKcal = function renderKcalProfileDynamic() {
+      const entries = loadKcalEntries();
+      const total = entries.reduce((sum, entry) => sum + Number(entry.kcal || 0), 0);
+      const limit = window.getKcalLimit();
+      const left = limit - total;
+      const pct = Math.min(140, (total / limit) * 100);
+
+      const totalEl = document.getElementById("kcal-total");
+      const leftEl = document.getElementById("kcal-left");
+      const fillEl = document.getElementById("kcal-fill");
+      const commentEl = document.getElementById("kcal-comment");
+      const historyEl = document.getElementById("kcal-history");
+
+      if (!totalEl || !leftEl || !fillEl || !commentEl || !historyEl) return originalRenderKcal();
+
+      totalEl.textContent = Math.round(total);
+      leftEl.textContent = Math.round(left);
+      fillEl.style.width = `${Math.min(100, pct)}%`;
+      fillEl.classList.toggle("over", total > limit);
+      commentEl.textContent = typeof kcalComment === "function" ? kcalComment(total) : "Kalorien gezählt.";
+
+      historyEl.innerHTML = entries.slice().reverse().map(entry => `
+        <div class="kcal-history-item">
+          <span>${entry.name}</span>
+          <strong>${Math.round(entry.kcal)} kcal</strong>
+        </div>
+      `).join("");
+    };
+    window.renderKcal.__profileDynamic = true;
+  }
+
+  if (typeof updateDeficitV4 === "function" && !updateDeficitV4.__profileDynamic) {
+    const originalUpdateDeficit = updateDeficitV4;
+    window.updateDeficitV4 = function updateDeficitProfileDynamic() {
+      const eaten = typeof loadKcalEntries === "function"
+        ? loadKcalEntries().reduce((sum, entry) => sum + Number(entry.kcal || 0), 0)
+        : 0;
+      const maintenance = window.getMaintenanceKcal();
+      const todayDeficit = Math.max(0, maintenance - eaten);
+      const today = new Date().toISOString().slice(0, 10);
+
+      const ledger = typeof loadJson === "function" ? loadJson("undead-deficit-ledger-v4", {}) : {};
+      ledger[today] = todayDeficit;
+      if (typeof saveJson === "function") saveJson("undead-deficit-ledger-v4", ledger);
+      else localStorage.setItem("undead-deficit-ledger-v4", JSON.stringify(ledger));
+
+      const totalDeficit = Object.values(ledger).reduce((sum, value) => sum + Number(value || 0), 0);
+      const cycle = totalDeficit % 7700;
+      const pct = cycle / 7700 * 100;
+
+      const dailyEl = document.getElementById("daily-deficit");
+      const totalEl = document.getElementById("total-deficit");
+      const fatEl = document.getElementById("fat-loss-theory");
+      const kgProgressEl = document.getElementById("kg-progress");
+      const kgPercentEl = document.getElementById("kg-percent");
+      const kgFillEl = document.getElementById("kg-fill");
+
+      if (dailyEl) dailyEl.textContent = `${Math.round(todayDeficit)} kcal`;
+      if (totalEl) totalEl.textContent = `${Math.round(totalDeficit)} kcal`;
+      if (fatEl) fatEl.textContent = `${(totalDeficit / 7700).toFixed(2)} kg`;
+      if (kgProgressEl) kgProgressEl.textContent = `${Math.round(cycle)} / 7700 kcal`;
+      if (kgPercentEl) kgPercentEl.textContent = `${pct.toFixed(1)}%`;
+      if (kgFillEl) kgFillEl.style.width = `${pct}%`;
+    };
+    window.updateDeficitV4.__profileDynamic = true;
+  }
+}, 1000);
+
+// Nach Login Profil aus Cloud holen
+window.addEventListener("load", () => {
+  setTimeout(() => {
+    if (window.supabaseClient) {
+      window.supabaseClient.auth.onAuthStateChange((_event, session) => {
+        if (session?.user && typeof window.loadUserProfileFromCloud === "function") {
+          setTimeout(() => window.loadUserProfileFromCloud(), 500);
+        }
+      });
+    }
+  }, 2000);
+});
+</script>
 
 </body>
 </html>
