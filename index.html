@@ -895,7 +895,7 @@ window.syncToCloud = async function syncToCloud() {
     await window.upsertCloudMetric("kg_history", typeof loadJson === "function" ? loadJson("undead-kg-history-v4", []) : []);
     await window.upsertCloudMetric("weight_history", typeof loadJson === "function" ? loadJson("undead-weight-history-v4", []) : []);
 
-    status.textContent = "Cloud-Sync abgeschlossen. Die Daten liegen in der Gruftwolke.";
+    status.textContent = "Manueller Cloud-Sync abgeschlossen. Die Daten liegen in der Gruftwolke.";
   } catch (error) {
     status.textContent = "Cloud-Sync fehlgeschlagen: " + error.message;
     console.error(error);
@@ -2128,5 +2128,107 @@ setTimeout(() => {
 }, 300);
 
 </script>
+
+<script>
+/* ============================
+   Auto Cloud Load + Auto Sync
+   ============================ */
+
+window.AUTO_CLOUD_SYNC_ENABLED = true;
+window.cloudSyncTimer = null;
+window.cloudInitialLoadDone = false;
+
+window.scheduleCloudSync = function scheduleCloudSync(reason = "unknown") {
+  if (!window.AUTO_CLOUD_SYNC_ENABLED) return;
+  if (typeof window.syncToCloud !== "function") return;
+
+  clearTimeout(window.cloudSyncTimer);
+
+  window.cloudSyncTimer = setTimeout(async () => {
+    const status = document.getElementById("cloud-status");
+    try {
+      if (status) status.textContent = "Auto-Sync läuft... (" + reason + ")";
+      await window.syncToCloud();
+      if (status) status.textContent = "Auto-Sync abgeschlossen. Die Gruftwolke ist aktuell.";
+    } catch (error) {
+      if (status) status.textContent = "Auto-Sync fehlgeschlagen: " + error.message;
+      console.error(error);
+    }
+  }, 900);
+};
+
+window.wrapFunctionForCloudSync = function wrapFunctionForCloudSync(name, reason) {
+  const original = window[name];
+  if (typeof original !== "function" || original.__cloudWrapped) return;
+
+  window[name] = function(...args) {
+    const result = original.apply(this, args);
+    window.scheduleCloudSync(reason || name);
+    return result;
+  };
+
+  window[name].__cloudWrapped = true;
+};
+
+window.enableCloudAutosync = async function enableCloudAutosync() {
+  const status = document.getElementById("cloud-status");
+
+  if (typeof window.initCloud === "function") {
+    window.initCloud();
+  }
+
+  if (typeof window.loadFromCloud === "function") {
+    try {
+      if (status) status.textContent = "Lade beim Start aus der Gruftwolke...";
+      await window.loadFromCloud();
+      window.cloudInitialLoadDone = true;
+      if (status) status.textContent = "Cloud geladen. Auto-Sync aktiv.";
+    } catch (error) {
+      if (status) status.textContent = "Auto-Laden fehlgeschlagen: " + error.message;
+      console.error(error);
+    }
+  }
+
+  // Aktionen, die Daten verändern
+  window.wrapFunctionForCloudSync("changeSmoke", "Zigaretten");
+  window.wrapFunctionForCloudSync("saveSmoke", "Zigaretten");
+  window.wrapFunctionForCloudSync("addDrink", "Trinkmenge");
+  window.wrapFunctionForCloudSync("saveDrinkEntries", "Trinkmenge");
+  window.wrapFunctionForCloudSync("saveKcalEntries", "Kalorien");
+  window.wrapFunctionForCloudSync("addWeightEntry", "Gewicht");
+  window.wrapFunctionForCloudSync("saveJson", "Historie");
+  window.wrapFunctionForCloudSync("addManualKcal", "Manuelle kcal");
+  window.wrapFunctionForCloudSync("addPendingProductAmount", "Barcode kcal");
+
+  // Falls ein Button direkt localStorage ändert, zusätzlich auf Klicks reagieren.
+  const clickableIds = [
+    "smoke-plus",
+    "smoke-minus",
+    "smoke-reset",
+    "water-250",
+    "water-500",
+    "kcal-reset",
+    "manual-add",
+    "manual-water-add",
+    "amount-add",
+    "update-weight"
+  ];
+
+  for (const id of clickableIds) {
+    const el = document.getElementById(id);
+    if (el && !el.dataset.cloudAutosyncBound) {
+      el.dataset.cloudAutosyncBound = "true";
+      el.addEventListener("click", () => window.scheduleCloudSync(id));
+    }
+  }
+};
+
+window.addEventListener("load", () => {
+  setTimeout(() => {
+    window.enableCloudAutosync();
+  }, 1200);
+});
+</script>
+
 </body>
 </html>
