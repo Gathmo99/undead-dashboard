@@ -830,83 +830,127 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">
 /* ============================
    Supabase Cloud Sync Config
-   ============================
-   1. Erstelle ein Supabase-Projekt.
-   2. Kopiere Project URL und anon public key hier rein.
-   3. Lege die Tabellen mit undead_dashboard_supabase.sql an.
-*/
-const SUPABASE_URL = "https://tskrmbddhtfeacthvnem.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRza3JtYmRkaHRmZWFjdGh2bmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExODM3OTYsImV4cCI6MjA5Njc1OTc5Nn0.p68Hjjm_g-VXvv_EOsVjJBn0xxiRmNXIYFKDx6EPVhk";
-const CLOUD_USER_ID = "jan-undead-dashboard";
+   ============================ */
+window.SUPABASE_URL = "https://tskrmbddhtfeacthvnem.supabase.co";
+window.SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRza3JtYmRkaHRmZWFjdGh2bmVtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExODM3OTYsImV4cCI6MjA5Njc1OTc5Nn0.p68Hjjm_g-VXvv_EOsVjJBn0xxiRmNXIYFKDx6EPVhk";
+window.CLOUD_USER_ID = "jan-undead-dashboard";
 
-let supabaseClient = null;
+window.supabaseClient = null;
 
-function cloudReady() {
+window.cloudReady = function cloudReady() {
   return (
     typeof window.supabase !== "undefined" &&
-    SUPABASE_URL.startsWith("https://") &&
-    !SUPABASE_ANON_KEY.startsWith("HIER_")
+    window.SUPABASE_URL.startsWith("https://") &&
+    window.SUPABASE_ANON_KEY.length > 40
   );
-}
+};
 
-function initCloud() {
+window.initCloud = function initCloud() {
   const status = document.getElementById("cloud-status");
   if (!status) return;
 
-  if (!cloudReady()) {
-    status.textContent = "Supabase noch nicht konfiguriert. URL und anon key im HTML eintragen.";
+  if (!window.cloudReady()) {
+    status.textContent = "Supabase nicht bereit. SDK, URL oder anon key fehlen.";
     return;
   }
 
-  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  status.textContent = "Cloud bereit. Daten können synchronisiert werden.";
-}
+  window.supabaseClient = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+  status.textContent = "Cloud bereit. Die Gruftwolke lauscht.";
+};
 
-async function upsertCloudMetric(type, payload) {
-  if (!supabaseClient) return;
+window.cloudToday = function cloudToday() {
+  return new Date().toISOString().slice(0, 10);
+};
 
-  const today = new Date().toISOString().slice(0, 10);
-  await supabaseClient
+window.upsertCloudMetric = async function upsertCloudMetric(type, payload) {
+  if (!window.supabaseClient) window.initCloud();
+  if (!window.supabaseClient) throw new Error("Supabase Client fehlt.");
+
+  const today = window.cloudToday();
+  const result = await window.supabaseClient
     .from("dashboard_entries")
     .upsert({
-      user_id: CLOUD_USER_ID,
+      user_id: window.CLOUD_USER_ID,
       entry_date: today,
       entry_type: type,
       payload
     }, { onConflict: "user_id,entry_date,entry_type" });
-}
 
-async function syncToCloud() {
+  if (result.error) throw result.error;
+};
+
+window.syncToCloud = async function syncToCloud() {
   const status = document.getElementById("cloud-status");
   if (!status) return;
 
-  if (!supabaseClient) {
-    initCloud();
-    if (!supabaseClient) return;
-  }
-
-  status.textContent = "Synchronisiere mit der Gruftwolke...";
-
   try {
-    await upsertCloudMetric("kcal", loadKcalEntries());
-    await upsertCloudMetric("drink", loadDrinkEntries());
-    await upsertCloudMetric("smokes", { count: loadSmoke() });
-    await upsertCloudMetric("weight", { current: getCurrentWeightV4?.() ?? 145 });
-    await upsertCloudMetric("deficit_ledger", loadJson("undead-deficit-ledger-v4", {}));
-    await upsertCloudMetric("kg_history", loadJson("undead-kg-history-v4", []));
-    await upsertCloudMetric("weight_history", loadJson("undead-weight-history-v4", []));
+    status.textContent = "Synchronisiere mit der Gruftwolke...";
 
-    status.textContent = "Cloud-Sync abgeschlossen. Die Daten liegen nun in der Gruftwolke.";
+    await window.upsertCloudMetric("kcal", typeof loadKcalEntries === "function" ? loadKcalEntries() : []);
+    await window.upsertCloudMetric("drink", typeof loadDrinkEntries === "function" ? loadDrinkEntries() : []);
+    await window.upsertCloudMetric("smokes", { count: typeof loadSmoke === "function" ? loadSmoke() : 0 });
+    await window.upsertCloudMetric("weight", { current: typeof getCurrentWeightV4 === "function" ? getCurrentWeightV4() : 145 });
+    await window.upsertCloudMetric("deficit_ledger", typeof loadJson === "function" ? loadJson("undead-deficit-ledger-v4", {}) : {});
+    await window.upsertCloudMetric("kg_history", typeof loadJson === "function" ? loadJson("undead-kg-history-v4", []) : []);
+    await window.upsertCloudMetric("weight_history", typeof loadJson === "function" ? loadJson("undead-weight-history-v4", []) : []);
+
+    status.textContent = "Cloud-Sync abgeschlossen. Die Daten liegen in der Gruftwolke.";
   } catch (error) {
     status.textContent = "Cloud-Sync fehlgeschlagen: " + error.message;
+    console.error(error);
   }
-}
+};
+
+window.loadFromCloud = async function loadFromCloud() {
+  const status = document.getElementById("cloud-status");
+  if (!status) return;
+
+  try {
+    if (!window.supabaseClient) window.initCloud();
+    if (!window.supabaseClient) return;
+
+    status.textContent = "Lade Daten aus der Gruftwolke...";
+
+    const today = window.cloudToday();
+    const { data, error } = await window.supabaseClient
+      .from("dashboard_entries")
+      .select("entry_type,payload")
+      .eq("user_id", window.CLOUD_USER_ID)
+      .eq("entry_date", today);
+
+    if (error) throw error;
+
+    for (const entry of data || []) {
+      if (entry.entry_type === "kcal" && typeof saveKcalEntries === "function") saveKcalEntries(entry.payload || []);
+      if (entry.entry_type === "drink" && typeof saveDrinkEntries === "function") saveDrinkEntries(entry.payload || []);
+      if (entry.entry_type === "smokes" && typeof saveSmoke === "function") saveSmoke(Number(entry.payload?.count || 0));
+      if (entry.entry_type === "weight" && entry.payload?.current) localStorage.setItem("undead-current-weight", String(entry.payload.current));
+      if (entry.entry_type === "deficit_ledger") localStorage.setItem("undead-deficit-ledger-v4", JSON.stringify(entry.payload || {}));
+      if (entry.entry_type === "kg_history") localStorage.setItem("undead-kg-history-v4", JSON.stringify(entry.payload || []));
+      if (entry.entry_type === "weight_history") localStorage.setItem("undead-weight-history-v4", JSON.stringify(entry.payload || []));
+    }
+
+    if (typeof renderKcal === "function") renderKcal();
+    if (typeof renderDrink === "function") renderDrink();
+    if (typeof renderSmoke === "function") renderSmoke();
+    if (typeof updateV4Panels === "function") updateV4Panels();
+
+    status.textContent = "Cloud-Daten geladen. Die Gruft hat geliefert.";
+  } catch (error) {
+    status.textContent = "Cloud-Laden fehlgeschlagen: " + error.message;
+    console.error(error);
+  }
+};
 
 setTimeout(() => {
-  initCloud();
+  window.initCloud();
+
   const syncButton = document.getElementById("cloud-sync");
-  if (syncButton) syncButton.addEventListener("click", syncToCloud);
-}, 500);
+  const loadButton = document.getElementById("cloud-load");
+
+  if (syncButton) syncButton.addEventListener("click", window.syncToCloud);
+  if (loadButton) loadButton.addEventListener("click", window.loadFromCloud);
+}, 600);
 
 </script>
 </head>
@@ -1180,8 +1224,9 @@ setTimeout(() => {
     <section class="panel">
       <h2 class="panel-title">Cloud-Speicher</h2>
       <div class="cloud-box">
-        <div class="cloud-status" id="cloud-status">Supabase noch nicht verbunden.</div>
+        <div class="cloud-status" id="cloud-status">Cloud wird geprüft...</div>
         <button id="cloud-sync" type="button">Jetzt synchronisieren</button>
+        <button id="cloud-load" type="button">Aus Cloud laden</button>
       </div>
     </section>
   </aside>
