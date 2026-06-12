@@ -826,6 +826,33 @@
     line-height: 1.35;
   }
 
+
+  .scanner-box {
+    border: 1px solid rgba(52,90,36,0.72);
+    background: rgba(0,0,0,0.28);
+    padding: 10px;
+    display: none;
+    gap: 8px;
+  }
+
+  .scanner-box.active {
+    display: grid;
+  }
+
+  .scanner-video {
+    width: 100%;
+    max-height: 260px;
+    background: #000;
+    border: 1px solid var(--border);
+    object-fit: cover;
+  }
+
+  .scanner-status {
+    color: var(--green);
+    font-size: clamp(11px, 1vw, 15px);
+    line-height: 1.35;
+  }
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -1147,6 +1174,16 @@ setTimeout(() => {
         <div class="kcal-input-row">
           <input class="kcal-input" id="barcode-input" inputmode="numeric" placeholder="Barcode eingeben">
           <button id="barcode-add" type="button">Suchen</button>
+        </div>
+
+        <div class="kcal-input-row">
+          <button id="scanner-open" type="button">Barcode scannen</button>
+          <button id="scanner-close" class="reset" type="button">Scanner schließen</button>
+        </div>
+
+        <div class="scanner-box" id="scanner-box">
+          <video class="scanner-video" id="scanner-video" playsinline muted></video>
+          <div class="scanner-status" id="scanner-status">Kamera bereit machen...</div>
         </div>
 
         <div class="pending-product" id="pending-product">
@@ -2227,6 +2264,112 @@ window.addEventListener("load", () => {
   setTimeout(() => {
     window.enableCloudAutosync();
   }, 1200);
+});
+</script>
+
+
+<script>
+/* ============================
+   Camera Barcode Scanner
+   ============================ */
+
+window.barcodeScannerStream = null;
+window.barcodeScannerTimer = null;
+window.barcodeDetector = null;
+
+window.startBarcodeScanner = async function startBarcodeScanner() {
+  const box = document.getElementById("scanner-box");
+  const video = document.getElementById("scanner-video");
+  const status = document.getElementById("scanner-status");
+
+  if (!box || !video || !status) return;
+
+  if (!("BarcodeDetector" in window)) {
+    status.textContent = "Dieser Browser unterstützt BarcodeDetector nicht. Nutze Chrome/Edge auf Android oder gib den Barcode manuell ein.";
+    box.classList.add("active");
+    return;
+  }
+
+  try {
+    box.classList.add("active");
+    status.textContent = "Kamera wird geöffnet...";
+
+    window.barcodeDetector = new BarcodeDetector({
+      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
+    });
+
+    window.barcodeScannerStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      },
+      audio: false
+    });
+
+    video.srcObject = window.barcodeScannerStream;
+    await video.play();
+
+    status.textContent = "Scanner aktiv. Halte den Barcode ruhig vor die Kamera.";
+
+    window.barcodeScannerTimer = setInterval(async () => {
+      try {
+        if (!window.barcodeDetector || video.readyState < 2) return;
+
+        const codes = await window.barcodeDetector.detect(video);
+        if (!codes || !codes.length) return;
+
+        const barcode = codes[0].rawValue;
+        const input = document.getElementById("barcode-input");
+        const productEl = document.getElementById("kcal-product");
+
+        if (input) input.value = barcode;
+        if (productEl) productEl.textContent = "Barcode erkannt: " + barcode + ". Suche läuft...";
+
+        window.stopBarcodeScanner();
+
+        if (typeof addBarcodeProduct === "function") {
+          addBarcodeProduct();
+        }
+      } catch (error) {
+        // Einzelne Scanfehler ignorieren, Kamera läuft weiter.
+      }
+    }, 600);
+
+  } catch (error) {
+    status.textContent = "Kamera konnte nicht geöffnet werden: " + error.message;
+    console.error(error);
+  }
+};
+
+window.stopBarcodeScanner = function stopBarcodeScanner() {
+  const box = document.getElementById("scanner-box");
+  const video = document.getElementById("scanner-video");
+  const status = document.getElementById("scanner-status");
+
+  if (window.barcodeScannerTimer) {
+    clearInterval(window.barcodeScannerTimer);
+    window.barcodeScannerTimer = null;
+  }
+
+  if (window.barcodeScannerStream) {
+    for (const track of window.barcodeScannerStream.getTracks()) {
+      track.stop();
+    }
+    window.barcodeScannerStream = null;
+  }
+
+  if (video) video.srcObject = null;
+  if (status) status.textContent = "Scanner geschlossen.";
+  if (box) box.classList.remove("active");
+};
+
+window.addEventListener("load", () => {
+  const open = document.getElementById("scanner-open");
+  const close = document.getElementById("scanner-close");
+
+  if (open) open.addEventListener("click", window.startBarcodeScanner);
+  if (close) close.addEventListener("click", window.stopBarcodeScanner);
 });
 </script>
 
