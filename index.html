@@ -1409,6 +1409,30 @@ window.addEventListener("load", () => {
     <div class="auth-grid">
       <input id="auth-email" type="email" autocomplete="email" placeholder="E-Mail">
       <input id="auth-password" type="password" autocomplete="current-password" placeholder="Passwort">
+
+      <div class="profile-note">Für Registrierung bitte Profil ausfüllen. Beim Login reichen E-Mail und Passwort.</div>
+
+      <div class="profile-row">
+        <input id="auth-profile-name" placeholder="Name">
+        <input id="auth-profile-age" inputmode="numeric" placeholder="Alter">
+      </div>
+
+      <div class="profile-row">
+        <input id="auth-profile-height" inputmode="decimal" placeholder="Größe cm">
+        <input id="auth-profile-weight" inputmode="decimal" placeholder="Gewicht kg">
+      </div>
+
+      <div class="profile-row">
+        <select id="auth-profile-sex">
+          <option value="male">Männlich</option>
+          <option value="female">Weiblich</option>
+          <option value="other">Divers / neutral</option>
+        </select>
+        <input id="auth-profile-kcal-limit" inputmode="numeric" placeholder="Kcal-Ziel, z.B. 1600">
+      </div>
+
+      <div class="auth-status" id="auth-profile-preview">Profilvorschau: noch keine Daten.</div>
+
       <div class="auth-actions">
         <button id="auth-login" type="button">Einloggen</button>
         <button id="auth-signup" type="button">Registrieren</button>
@@ -2945,6 +2969,230 @@ window.addEventListener("load", () => {
     }
   }, 2000);
 });
+</script>
+
+
+<script>
+/* ============================
+   Start Weight Per User Fix
+   ============================ */
+
+window.startWeightKey = function startWeightKey() {
+  const id = window.currentAuthUser?.id || "local";
+  return "undead-start-weight-" + id;
+};
+
+window.getStartWeight = function getStartWeight() {
+  const stored = localStorage.getItem(window.startWeightKey());
+  if (stored !== null && stored !== "") return Number(stored);
+
+  const profileWeight = Number(window.currentProfile?.weight_kg || 145);
+  localStorage.setItem(window.startWeightKey(), String(profileWeight));
+  return profileWeight;
+};
+
+window.setStartWeightIfMissing = function setStartWeightIfMissing(weight) {
+  if (localStorage.getItem(window.startWeightKey()) === null) {
+    localStorage.setItem(window.startWeightKey(), String(weight));
+  }
+};
+
+setTimeout(() => {
+  const oldApplyProfileToUi = window.applyProfileToUi;
+  if (typeof oldApplyProfileToUi === "function" && !oldApplyProfileToUi.__startWeightFixed) {
+    window.applyProfileToUi = function(profile) {
+      oldApplyProfileToUi(profile);
+
+      const currentWeight = Number(profile?.weight_kg || window.currentProfile?.weight_kg || 145);
+      window.setStartWeightIfMissing(currentWeight);
+
+      const start = window.getStartWeight();
+      const change = currentWeight - start;
+
+      const currentWeightEl = document.getElementById("current-weight");
+      const startWeightEl = document.getElementById("start-weight");
+      const weightChangeEl = document.getElementById("weight-change");
+
+      if (currentWeightEl) currentWeightEl.textContent = currentWeight.toFixed(1) + " kg";
+      if (startWeightEl) startWeightEl.textContent = start.toFixed(1) + " kg";
+      if (weightChangeEl) weightChangeEl.textContent = (change >= 0 ? "+" : "") + change.toFixed(1) + " kg";
+    };
+
+    window.applyProfileToUi.__startWeightFixed = true;
+  }
+
+  const oldSaveUserProfile = window.saveUserProfile;
+  if (typeof oldSaveUserProfile === "function" && !oldSaveUserProfile.__startWeightFixed) {
+    window.saveUserProfile = async function() {
+      const beforeHadStart = localStorage.getItem(window.startWeightKey()) !== null;
+      await oldSaveUserProfile();
+
+      const profile = window.readProfileFromForm ? window.readProfileFromForm() : window.currentProfile;
+      const currentWeight = Number(profile?.weight_kg || 145);
+
+      if (!beforeHadStart) {
+        localStorage.setItem(window.startWeightKey(), String(currentWeight));
+      }
+
+      if (typeof window.applyProfileToUi === "function") {
+        window.applyProfileToUi(profile);
+      }
+    };
+
+    window.saveUserProfile.__startWeightFixed = true;
+  }
+}, 1200);
+</script>
+
+
+<script>
+/* ============================
+   Registration Profile Onboarding
+   ============================ */
+
+window.readAuthProfileFromForm = function readAuthProfileFromForm() {
+  const get = id => document.getElementById(id)?.value;
+  return {
+    name: get("auth-profile-name") || "",
+    age: Number(String(get("auth-profile-age") || "").replace(",", ".")),
+    height_cm: Number(String(get("auth-profile-height") || "").replace(",", ".")),
+    weight_kg: Number(String(get("auth-profile-weight") || "").replace(",", ".")),
+    sex: get("auth-profile-sex") || "male",
+    kcal_limit: Number(String(get("auth-profile-kcal-limit") || "").replace(",", ".")),
+    activity_factor: 1.2
+  };
+};
+
+window.validateAuthProfile = function validateAuthProfile(profile) {
+  if (!profile.name.trim()) return "Name fehlt.";
+  if (!Number.isFinite(profile.age) || profile.age < 10 || profile.age > 120) return "Alter fehlt oder ist ungültig.";
+  if (!Number.isFinite(profile.height_cm) || profile.height_cm < 80 || profile.height_cm > 250) return "Größe fehlt oder ist ungültig.";
+  if (!Number.isFinite(profile.weight_kg) || profile.weight_kg < 25 || profile.weight_kg > 350) return "Gewicht fehlt oder ist ungültig.";
+  if (!Number.isFinite(profile.kcal_limit) || profile.kcal_limit < 800 || profile.kcal_limit > 6000) return "Kcal-Ziel fehlt oder ist ungültig.";
+  return null;
+};
+
+window.updateAuthProfilePreview = function updateAuthProfilePreview() {
+  const preview = document.getElementById("auth-profile-preview");
+  if (!preview) return;
+
+  const profile = window.readAuthProfileFromForm();
+  const error = window.validateAuthProfile(profile);
+
+  if (error) {
+    preview.textContent = "Profilvorschau: " + error;
+    return;
+  }
+
+  const bmr = typeof window.calculateBmr === "function"
+    ? window.calculateBmr(profile)
+    : Math.round(10 * profile.weight_kg + 6.25 * profile.height_cm - 5 * profile.age + (profile.sex === "female" ? -161 : profile.sex === "male" ? 5 : -78));
+
+  const maintenance = typeof window.calculateMaintenance === "function"
+    ? window.calculateMaintenance(profile)
+    : Math.round(bmr * 1.2);
+
+  preview.textContent = `Profilvorschau: BMR ${bmr} kcal · Erhaltung ${maintenance} kcal · Ziel ${profile.kcal_limit} kcal`;
+};
+
+window.saveProfileForUser = async function saveProfileForUser(user, profile) {
+  if (!window.supabaseClient || !user?.id) throw new Error("Kein eingeloggter Nutzer für Profil.");
+
+  const { error } = await window.supabaseClient
+    .from("dashboard_profiles")
+    .upsert({
+      user_id: user.id,
+      name: profile.name,
+      age: profile.age,
+      height_cm: profile.height_cm,
+      weight_kg: profile.weight_kg,
+      sex: profile.sex,
+      kcal_limit: profile.kcal_limit,
+      activity_factor: profile.activity_factor
+    }, { onConflict: "user_id" });
+
+  if (error) throw error;
+};
+
+setTimeout(() => {
+  const profileInputs = [
+    "auth-profile-name",
+    "auth-profile-age",
+    "auth-profile-height",
+    "auth-profile-weight",
+    "auth-profile-sex",
+    "auth-profile-kcal-limit"
+  ];
+
+  for (const id of profileInputs) {
+    const el = document.getElementById(id);
+    if (el && !el.dataset.previewBound) {
+      el.dataset.previewBound = "true";
+      el.addEventListener("input", window.updateAuthProfilePreview);
+      el.addEventListener("change", window.updateAuthProfilePreview);
+    }
+  }
+
+  window.updateAuthProfilePreview();
+
+  const oldSignUp = window.signUpWithEmail;
+  window.signUpWithEmail = async function signUpWithEmailWithProfile() {
+    const email = document.getElementById("auth-email")?.value.trim();
+    const password = document.getElementById("auth-password")?.value;
+    const profile = window.readAuthProfileFromForm();
+    const profileError = window.validateAuthProfile(profile);
+
+    if (!email || !password) {
+      window.setAuthStatus?.("E-Mail und Passwort eintragen.");
+      return;
+    }
+
+    if (profileError) {
+      window.setAuthStatus?.("Profil unvollständig: " + profileError);
+      return;
+    }
+
+    if (!window.supabaseClient) window.initCloud?.();
+    if (!window.supabaseClient) {
+      window.setAuthStatus?.("Supabase ist nicht bereit.");
+      return;
+    }
+
+    window.setAuthStatus?.("Erstelle Account und Profil...");
+
+    const { data, error } = await window.supabaseClient.auth.signUp({ email, password });
+    if (error) {
+      window.setAuthStatus?.("Registrierung fehlgeschlagen: " + error.message);
+      return;
+    }
+
+    const user = data.user;
+    if (!user) {
+      window.setAuthStatus?.("Account erstellt. Bitte E-Mail bestätigen und danach einloggen.");
+      return;
+    }
+
+    try {
+      window.currentAuthUser = user;
+      window.CLOUD_USER_ID = user.id;
+
+      window.saveLocalProfile?.(profile);
+      localStorage.setItem("undead-start-weight-" + user.id, String(profile.weight_kg));
+
+      await window.saveProfileForUser(user, profile);
+
+      window.applyProfileToUi?.(profile);
+      window.updateAuthUi?.(user);
+      window.setAuthStatus?.("Account und Profil erstellt. Die Gruft öffnet sich.");
+
+      if (typeof window.loadFromCloud === "function") await window.loadFromCloud();
+      if (typeof window.syncToCloud === "function") await window.syncToCloud();
+    } catch (profileSaveError) {
+      console.error(profileSaveError);
+      window.setAuthStatus?.("Account erstellt, aber Profil konnte nicht gespeichert werden: " + profileSaveError.message);
+    }
+  };
+}, 1400);
 </script>
 
 </body>
